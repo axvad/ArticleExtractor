@@ -1,9 +1,11 @@
+import sys
+import os
 import requests
 import re
 
 class PageLoader:
     '''class load html page'''
-    url="";
+    url=""
 
     def __init__(self):
         self.url = ""
@@ -51,11 +53,11 @@ class PageTree:
             text = re.findall('<[ph][^>]*>(.*?)</[ph][0-9]*>',hot_text)
 
             for line in text:
-                fab = PageTree.__replaceHREF(line)
-                fab = PageTree.__clearTeg(fab)
-                fab = PageTree.__clearHostWords(fab, rule.hostWords)
+                fab = self.__replaceHREF(line)
+                fab = self.__clearTeg(fab)
+                fab = self.__clearHostWords(fab, rule.hostWords)
 
-                res_text = res_text + PageTree.__line_width(fab) + '\n\n'
+                res_text = res_text + self.__line_width(fab) + '\n\n'
 
             #clear node for new search
             self.node= NodeHTML()
@@ -83,7 +85,7 @@ class PageTree:
 
                 if not res:
                     print("Can't find subkey \"{}\" in teg {}".format(key, inner_node.get_text()))
-                    break;
+                    break
 
                 else:
                     inner_node = res
@@ -94,7 +96,7 @@ class PageTree:
 
         return inner_node
 
-    def __line_width(long_string, width = 80):
+    def __line_width(self, long_string, width = 80):
         """Set width for string, cut \n if longer"""
 
         litle_strings = long_string.split('\n')
@@ -106,28 +108,28 @@ class PageTree:
             if len(s)>width:
                 lws = s.rfind(' ', 1, width)
                 lws = width if lws<1 else lws
-                res = res + s[:lws].rstrip()+'\n' + PageTree.__line_width(s[lws:]).lstrip()
+                res = res + s[:lws].rstrip()+'\n' + self.__line_width(s[lws:]).lstrip()
 
             else:
                 res = res + s
 
         return res
 
-    def __replaceHREF(string):
+    def __replaceHREF(self, string):
         patt = re.compile('<a href=[\"]?(.*?)[\" ].*?>(.*?)</a>')
-        result = patt.sub('\g<2> [\g<1>]',string)
+        result = patt.sub('\g<2> [\g<1>]', string)
         return result
 
-    def __clearTeg(string):
+    def __clearTeg(self, string):
         """finally - clear all teg from text"""
 
         patt = re.compile('<.*?>')
 
-        result = patt.sub('',string)
+        result = patt.sub('', string)
 
         return result
 
-    def __clearHostWords(string, hostWords):
+    def __clearHostWords(self, string, hostWords):
 
         if not hostWords:
             return string
@@ -141,7 +143,7 @@ class PageTree:
 
     def clearSpec(string):
         """clear all \n, \r, \t symbols"""
-        return re.sub('[\n\r\t]+','',string)
+        return re.sub('[\n\r\t]+', '', string)
 
 
 class NodeHTML:
@@ -295,7 +297,7 @@ class NodeHTML:
 
         NodeHTML.__print_space -= 2
 
-        print('{:.{align}{width}}{} end with[{}] need/{}'.format('', self, clearSpec(self.text[self.end-50:self.end+10]), self.head, align='>', width=NodeHTML.__print_space))
+        print('{:.{align}{width}}{} end with[{}] need/{}'.format('', self, PageTree.clearSpec(self.text[self.end-50:self.end+10]), self.head, align='>', width=NodeHTML.__print_space))
 
     def get_text(self):
 
@@ -558,15 +560,72 @@ def main():
     else:
         print('Bad response from site: code '+str(f.status_code))
 
-def run_class():
+def run_extractor(link,outputfilename):
 
-    link = "https://lenta.ru/news/2017/10/06/triumf_saudi_dogovor/"
+    #link = "https://lenta.ru/news/2017/10/06/triumf_saudi_dogovor/"
 
     html  = HtmlToText()
 
     html.load_settings()
 
-    html.get_text_article(link)
+    html.get_text_article(link,outputfilename)
 
 
-run_class()
+def load_settings():
+    pass
+
+def print_help():
+    helping = "\n\
+    Программа сохраняет адресный текст страницы (без рекламы) в txt файл директории ./result/url.txt\n\n\
+    Формат запуcка: article2text.exe \"url_1\" \"url_2\" ...\n\
+        url - ссылки на статьи в формате \"http://some.ru/mega_nuews\"\n\
+    \n\
+    Настройки фильтров дополнять в файле filter.ini\n\n"
+
+    print(helping)
+
+def outputfilename(url):
+    r = re.search(r'(https?://)?([\da-z.-]+)\.([a-z.]{2,6})([/\d\w .-]*)', url)
+
+    if not r:
+        return ""
+
+    out_dir = os.curdir + '/' + "/result/"\
+              +(r.group(2)+r.group(3)).replace(".", '')
+
+    file_name = r.group(4).replace("/", "_")
+
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
+    i=0
+    while True:
+        filename = out_dir+"/"+file_name + '({}).txt'.format(i)
+        try:
+            os.stat(filename)
+            i += 1
+
+        except FileNotFoundError:
+            break
+
+        if i > 20:
+            print("Too match files in " + filename)
+            break
+
+    return filename
+
+if __name__ == '__main__':
+
+    if len (sys.argv) == 1:
+        print_help()
+        sys.exit()
+
+    for ar in sys.argv[1:]:
+        out_file = outputfilename(ar)
+        if len(out_file)>2:
+            print("Extracting {} to {}".format(ar, out_file))
+            run_extractor(ar, out_file)
+        else:
+            print("Can't response link: {}".format(ar))
+
+
