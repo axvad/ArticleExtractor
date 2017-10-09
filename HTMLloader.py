@@ -3,6 +3,7 @@ import os
 import requests
 import re
 
+
 class PageLoader:
     '''class load html page'''
     url=""
@@ -17,7 +18,7 @@ class PageLoader:
 class PageTree:
     """Class parsing html page as tree of nodes"""
 
-    __DEBUG = False
+    DEBUG = False
 
     def __init__(self):
         self.text = ""
@@ -27,10 +28,10 @@ class PageTree:
 
         self.rules = rules
 
-    def get_as_clear_text(self, htmlText, includeKeys=None, excludeKeys=None):
+    def get_as_clear_text(self, htmlText):
         """return parsing text"""
 
-        if (not includeKeys and not excludeKeys and len(self.rules)==0):
+        if (len(self.rules)==0):
             return "Can't resolve. Need some filter key"
 
         res_text = ""
@@ -44,11 +45,13 @@ class PageTree:
             if not node:
                 return None
 
-            if PageTree.__DEBUG:
-                node.pretty_print(True)
+            if NodeHTML.DEBUG:
+                node.pretty_print(NodeHTML.DEBUG)
 
             hot_text = node.get_text()
 
+            if PageTree.DEBUG:
+                print('Nodes text: '+hot_text)
             # extract text from <p> and <h..> teg
             text = re.findall('<[ph][^>]*>(.*?)</[ph][0-9]*>',hot_text)
 
@@ -74,8 +77,8 @@ class PageTree:
 
         self.node.create(htmlText, pos)
 
-        if PageTree.__DEBUG:
-            self.node.pretty_print(True)
+        if NodeHTML.DEBUG:
+            self.node.pretty_print(NodeHTML.DEBUG)
 
         inner_node = self.node
 
@@ -84,7 +87,8 @@ class PageTree:
                 res = inner_node.find_node(key)
 
                 if not res:
-                    print("Can't find subkey \"{}\" in teg {}".format(key, inner_node.get_text()))
+                    print("Warning: Can't find subkey \"{}\" in teg {}"\
+                          .format(key, PageTree.clearSpec(inner_node.get_text()[:40])))
                     break
 
                 else:
@@ -123,9 +127,8 @@ class PageTree:
     def __clearTeg(self, string):
         """finally - clear all teg from text"""
 
-        patt = re.compile('<.*?>')
-
-        result = patt.sub('', string)
+        result = re.sub('<.*?>', '', string)
+        result = re.sub('(&[a-zA-Z0-9#]+;)','', result)
 
         return result
 
@@ -149,7 +152,7 @@ class PageTree:
 class NodeHTML:
     """Class for seve html page as tree nodes"""
 
-    __DEBUG=False
+    DEBUG=False
     __print_space=0
 
     def __init__(self):
@@ -197,7 +200,7 @@ class NodeHTML:
             inner_teg = patt_open_teg #'<[a-z0-9]+[ >]'
 
 
-        if NodeHTML.__DEBUG:
+        if NodeHTML.DEBUG:
             desc = re.match('.*[^\n].*',text[self.start:self.start+80]).group()
             print ('{:.{align}{width}}{} [{:^6},{:^6}] {}'.format('', self.head, self.start, "????", desc, align='>', width=NodeHTML.__print_space))
             NodeHTML.__print_space += 2
@@ -230,7 +233,7 @@ class NodeHTML:
                 self.end = pos_close_teg
                 break
 
-        if NodeHTML.__DEBUG:
+        if NodeHTML.DEBUG:
 
             NodeHTML.__print_space -= 2
             print ('{:.{align}{width}}{} [{:^6},{:^6}] Childs:{}'.format('', self.head, self.start, self.end, len(self.child_nodes), align='>', width=NodeHTML.__print_space))
@@ -369,9 +372,77 @@ class ContextFilter:
 
         return host
 
+    def load_from_file(self, filename):
+
+        fs = open(filename, 'r')
+
+        num_line = 0
+        start_filter = False
+        patt = re.compile('^([^:]+):? ({[^{^}]})+ ')
+
+        for line in fs:
+            num_line += 1
+            if start_filter:
+                host = re.match(r'^([^:]+):',line)
+
+                if not host:
+                    print("Can't response settings: 'host' at line {}".format(num_line))
+                    continue
+
+                rules = re.findall(' ({[^{^}]+})',line)
+
+                if not rules or len(rules) == 0:
+                    print("Can't response rules for {} at line {}".format(host.group(1), num_line))
+                    continue
+
+                for rl in rules:
+                    rule = Rule.parse(rl)
+
+                    if host.group(1) in self.__filters.keys():
+                        self.__filters[host.group(1)].append(rule)
+                    else:
+                        self.__filters[host.group(1)] = [rule]
+
+            elif line.startswith('FILTERS:'):
+                start_filter = True
+
+    def save_to_file(self,filename):
+
+        fs = open(filename, 'w')
+
+        title = "# Настройки фильтров для некоторых новостных сайтов.\n\
+        # Структура фильтра:\n\
+        # <HOST.COM>: {<Name>; <Priority>; ['<includeKey1>','<includeKey2>']; \n\
+        #			['<excludeKey1>','<excludeKey2>']; ['hostword1']; }\n\
+        #\n\
+        # Для одного host может быть определено несколько фильтров, обрабатываемых в \n\
+        # порядке ключа приоритета для возможности комбинировать данные из нескольких \n\
+        # блоков HTML (например заголовок и текст могут определятся отдельно)\n\
+        #\n\
+        # Настройки считываются после строки, начинающейся с FILTERS\n"
+
+        fs.write(title)
+
+        fs.write('\nFILTERS:\n')
+
+        for flt in self.__filters.keys():
+            fs.write('{}:'.format(flt))
+            for rule in self.__filters[flt]:
+                fs.write(' {'+str(rule)+'}')
+
+            fs.write('\n')
+
+        fs.close()
+
 
 class Rule:
-    """save filter for site"""
+    """ Tune rules for site
+        name - идентификатор правила
+        priority - порядок применения rules
+        includeKeys - вложенные уровни поиска блока html
+        excludeKey - исключение блоков html, содержащих ключевые слова
+        hostWords - отчистка текста от служебных слов хоста
+    """
 
     def __init__(self, name, priority, incudeKeys, excludeKeys=None, hostWords=None):
         self.name = name
@@ -380,26 +451,65 @@ class Rule:
         self.excludeKeys = excludeKeys if not excludeKeys or type(excludeKeys) is list  else [excludeKeys]
         self.hostWords = hostWords if not hostWords or type(hostWords) is list else [hostWords]
 
+    def __str__(self):
+        result = '{}; {}; {}; {}; {}; '.format(
+            self.name,
+            self.priority,
+            self.includeKeys,
+            self.excludeKeys,
+            self.hostWords)
+
+        return result
+
+    def parse(string):
+        m = re.findall(r'[{ ]([^;]+);', string)
+
+        inc = re.findall('\'([^\']+)\'', m[2])
+        exc = re.findall('\'([^\']+)\'', m[3])
+        wrd = re.findall('\'([^\']+)\'', m[4])
+
+        rule = Rule(m[0], m[1], inc, exc, wrd)
+        if HtmlToText.DEBUG:
+            print(rule)
+
+        return rule
+
 
 class HtmlToText:
+    """ Main class for parsing sites """
+
+    DEBUG = False
+
+    SAVE_HTML = False
+
     def __init__(self):
         self.__loader = PageLoader()
         self.__page = PageTree()
         self.__filter = ContextFilter()
-        self.__file_save_origin_html = None #"recived_article.html"
+        self.__file_save_origin_html = None
 
 
     def load_settings(self, filename=None):
 
-        if not filename:
-            self.__filter.add_rule("default", Rule("default", 1, ["<body", "articlle"], ["AdCentre", "Adcent", "header"], ["&[a-zA-Z0-9]+;"]))
+        filename = os.curdir+'/filter.ini'
 
-            self.__filter.add_rule("lenta.ru", Rule("Content", 2, ["b-topic__content"], ["<aside"], ["&[a-zA-Z0-9]+;"]))
-            self.__filter.add_rule("gazeta.ru", Rule("Content", 2, ["<main", "article"], ["AdCentre", "id=\"Adcenter_Vertical\"", "id=\"right\"", "id=\"article_pants\""], ["&[a-zA-Z0-9]+;"])) #article_context article-text "main_article" "id=\"news-content\""
-            self.__filter.add_rule("rambler.ru", Rule("Content", 2, ["class=\"article__center\""], None, ["&[a-zA-Z0-9]+;", '&nbsp'])) #"<body data", "<div class=\"page\"",
-            self.__filter.add_rule("rt.com", Rule("Content", 1, ["class=\"article article_article-page\""], ["id=\"twitter", "blockquote class=\"twitter"], ["&[a-zA-Z0-9]+;"]))
-            self.__filter.add_rule("vz.ru", Rule("Title", 1, ["class=\"fixed_wrap2\"", "<h1"], ["<table"], ["&[a-zA-Z0-9]+;"]))
-            self.__filter.add_rule("vz.ru", Rule("Text", 2, ["class=\"text newtext\""], None, ["&[a-zA-Z0-9]+;"]))
+        try:
+            os.stat(filename)
+
+            self.__filter.load_from_file(filename)
+
+        except FileNotFoundError:
+
+            self.__filter.add_rule("default", Rule("default", 1, ["<body", "articlle"], ["AdCentre", "Adcent", "header"], None))
+
+            self.__filter.add_rule("lenta.ru", Rule("Content", 2, ["b-topic__content"], ["<aside"], None))
+            self.__filter.add_rule("gazeta.ru", Rule("Content", 2, ["<main", "article"], ["AdCentre", "id=\"Adcenter_Vertical\"", "id=\"right\"", "id=\"article_pants\""], None)) #article_context article-text "main_article" "id=\"news-content\""
+            self.__filter.add_rule("rambler.ru", Rule("Content", 2, ["class=\"article__center\""], None, None)) #"<body data", "<div class=\"page\"",
+            self.__filter.add_rule("rt.com", Rule("Content", 1, ["class=\"article article_article-page\""], ["id=\"twitter", "blockquote class=\"twitter"], None))
+            self.__filter.add_rule("vz.ru", Rule("Title", 1, ["class=\"fixed_wrap2\"", "<h1"], ["<table"], None))
+            self.__filter.add_rule("vz.ru", Rule("Text", 2, ["class=\"text newtext\""], None, None))
+
+            self.__filter.save_to_file(filename)
 
     def get_filename_from_url(self, url):
         #result = re.sub(r'^http://([^\/]+)?/.*$','\1',url)
@@ -416,11 +526,13 @@ class HtmlToText:
 
         intext = html_page.text
 
-        #test write full page as is
-        if self.__file_save_origin_html:
-            org_html = open(self.__file_save_origin_html, "w")
-            org_html.write(intext)
-            org_html.close()
+        print("HTML page loaded. {} charsets".format(len(intext)))
+
+        if HtmlToText.SAVE_HTML:
+            html_file = out_filename.replace('.txt', '.html')
+            hf = open(html_file,"w")
+            hf.write(intext)
+            hf.close()
 
         #load rules for page (True - for default rules)
         rules = self.__filter.get_rules(url, True)
@@ -437,8 +549,9 @@ class HtmlToText:
 
                 print("Parse article ({} charsets) from '{}'".format(len(text), url))
 
-                print('\n'+url)
-                print(text)
+                if HtmlToText.DEBUG:
+                    print('\n'+url)
+                    print(text)
 
                 if not out_filename:
                     out_filename = self.get_filename_from_url(url)
@@ -454,135 +567,42 @@ class HtmlToText:
             else:
                 print("Can't parse article. Nothing for save.")
 
+        print('\n')
         return
 
 
-def main():
+def run_extractor(link,outputfilename, isLogged='nothing'):
 
-    cito = ContextFilter()
-    cito.add_rule("lenta.ru", Rule("Content", 2, ["b-topic__content"], ["<aside"], ["&[a-zA-Z0-9]+;"]))
-    cito.add_rule("gazeta.ru", Rule("Content", 2, ["<main", "article"], ["AdCentre", "id=\"Adcenter_Vertical\"", "id=\"right\"", "id=\"article_pants\""], ["&[a-zA-Z0-9]+;"])) #article_context article-text "main_article" "id=\"news-content\""
-    cito.add_rule("rambler.ru", Rule("Content", 2, ["class=\"article__center\""], None, ["&[a-zA-Z0-9]+;", '&nbsp'])) #"<body data", "<div class=\"page\"",
-    cito.add_rule("rt.com", Rule("Content", 1, ["class=\"article article_article-page\""], ["id=\"twitter", "blockquote class=\"twitter"], ["&[a-zA-Z0-9]+;"]))
-    cito.add_rule("yandex.ru", Rule("Annotation", 1, ["<body", "story__annot"], None, None))
+    if re.search('main', isLogged):
+        HtmlToText.DEBUG = True
 
-    cito.add_rule("vz.ru", Rule("Title", 1, ["class=\"fixed_wrap2\"", "<h1"], ["<table"], ["&[a-zA-Z0-9]+;"]))
-    cito.add_rule("vz.ru", Rule("Text", 2, ["class=\"text newtext\""], None, ["&[a-zA-Z0-9]+;"]))
+    if re.search('page', isLogged):
+        PageTree.DEBUG = True
 
-    cito.add_rule("default", Rule("default", 1, ["<body", "articlle"], ["AdCentre", "Adcent", "header"], ["&[a-zA-Z0-9]+;"]))
+    if re.search('node', isLogged):
+        NodeHTML.DEBUG = True
 
-
-    #LENTA.RU
-    link = "https://lenta.ru/articles/2017/10/06/hypersonic/"
-    link = "https://lenta.ru/news/2017/10/06/usaisisdruzba/"
-    link = "https://lenta.ru/news/2017/10/06/triumf_saudi_dogovor/"
-    link = "https://lenta.ru/news/2017/10/04/catalan/"
-    link = "https://lenta.ru/news/2017/10/05/wane/"
-    link = "https://lenta.ru/articles/2017/10/06/bognefraer/"
-
-    #GAZETA.RU
-    link = "https://www.gazeta.ru/science/2017/10/05_a_10917854.shtml"
-    link = "https://www.gazeta.ru/army/news/10657904.shtml"
-    link = "https://www.gazeta.ru/business/2017/10/06/10920080.shtml"
-    link = "https://www.gazeta.ru/politics/2017/10/06_a_10919630.shtml"
-    link = "https://www.gazeta.ru/army/2017/10/06/10919912.shtml"
-    link = "https://www.gazeta.ru/tech/2017/08/17/10835450/mts_6minutes.shtml"
-    link = "https://www.gazeta.ru/tech/2017/10/06/10920086/nsa_screwsup_again.shtml"
-
-    # RAMBLER.RU
-    link = "https://news.rambler.ru/politics/38002306-kak-tramp-naputstvoval-novogo-posla-ssha-v-rf/"
-    link = "https://news.rambler.ru/army/38093890-pentagon-usomnilsya-v-sposobnosti-vks-pobedit-ig/?24smi=1"
-
-    #RT.COM
-    link = "https://russian.rt.com/sport/article/437268-chm-2018-otbor-kvalifikaciya?utm_medium=more&utm_source=rnews"
-    link = "https://russian.rt.com/russia/news/437330-lukashenko-pozdravil-putin"
-    link = "https://russian.rt.com/nopolitics/article/437214-film-salyut-7"
-
-    # VZ.RU
-    link = "https://vz.ru/news/2017/10/7/890029.html?utm_medium=more&utm_source=rnews"
-    link = "https://vz.ru/news/2017/10/7/890025.html"
-
-    # YANDEX.RU
-    link = "https://news.yandex.ru/yandsearch?cl4url=iz.ru/655514/2017-10-07/polevye-komandiry-i-glavar-ig-ash-shishani-unichtozheny-vks-rf-v-sirii&lang=ru&from=main_portal&stid=ZJGYEcA3cvDOEQwxZfhg&lr=121608&msid=1507362660.04075.22877.19734&mlid=1507362372.glob_225.f020111a"
-
-    #default filter
-    link = "https://www.passion.ru/style/modnye-tendencii/kak-podgotovit-rebenka-k-kholodam-5-stilnykh-idei-dlya-vsekh-vozrastov.htm?utm_source=editorial&utm_medium=editorial&utm_campaign=Gulliver&utm_source=editorial&utm_medium=editorial&utm_campaign=gulliver"
-    link = "http://24-rus.info/showbiz/aleksandr-maslyakov-skonchalsya/full/"
-    link = "http://24-rus.info/politics/putin-razygral-velikolepnuyu-partiyu-postaviv-na-mesto-ukrainu-i-polshu/full/"
-    link = "https://tmb.news/news/russia/15439_v_rossii_poyavitsya_novyy_perspektivnyy_avianosets/?utm_source=24smi&utm_medium=referral&utm_term=1302&utm_content=1318549&utm_campaign=10923"
-
-    # redirect
-    link = "https://palacesquare.rambler.ru/sqgelhtx/MThvcms1LjRlNGpAeyJkYXRhIjp7IkFjdGlvbiI6IlJlZGlyZWN0IiwiUmVmZmVyZXIiOiJodHRwczovL2xlbnRhLnJ1L3J1YnJpY3MvcnVzc2lhLyIsIlByb3RvY29sIjoiaHR0cHM6IiwiSG9zdCI6ImxlbnRhLnJ1In0sImxpbmsiOiJodHRwczovL2FuLnlhbmRleC5ydS9tYXB1aWQvbGVudGFydS8wNjg3ZjdjMzVjYjgwNzQzYjhiNmJkM2JkOWFiNTVmMD9qc3JlZGlyPTEmbG9jYXRpb249aHR0cHMlM0ElMkYlMkZsZW50YS5ydSUyRmFydGljbGVzJTJGMjAxNyUyRjEwJTJGMDYlMkZib2duZWZyYWVyJTJGIn0%3D"
-
-    link = "https://vz.ru/news/2017/10/6/889991.html"
-
-    filename = "/home/sam/Programming/Git/SiteTextExtractor/export_test.html"
-
-    # here will be load setting
-    setting = open("site_export_settings.ini","w")
-
-    setting.write(str(cito))
-
-    setting.close()
-
-    # load page
-    loader = PageLoader()
-
-    f = loader.getHtmlPage(link)
-
-    if f.status_code == 200:
-
-        page = PageTree()
-
-        intext = f.text
-
-        #test write full page as is
-        fl = open(filename, "w")
-        fl.write(intext)
-        fl.close()
-
-        #load rules for page
-        rules = cito.get_rules(link, True)
-
-        if rules:
-
-            page.set_filter_rules(rules)
-
-            #intext = clearSpec(intext)
-
-            text = page.get_as_clear_text(intext)
-
-            if text and len(text)>1:
-                print('\n'+link)
-                print(text)
-
-
-    else:
-        print('Bad response from site: code '+str(f.status_code))
-
-def run_extractor(link,outputfilename):
-
-    #link = "https://lenta.ru/news/2017/10/06/triumf_saudi_dogovor/"
-
-    html  = HtmlToText()
+    html = HtmlToText()
 
     html.load_settings()
+
+    print("Settings loaded")
 
     html.get_text_article(link,outputfilename)
 
 
-def load_settings():
-    pass
-
 def print_help():
     helping = "\n\
     Программа сохраняет адресный текст страницы (без рекламы) в txt файл директории ./result/url.txt\n\n\
-    Формат запуcка: article2text.exe \"url_1\" \"url_2\" ...\n\
+    Формат запуcка: article2text.exe [+html] [+d:main +d:page] \"url_1\" \"url_2\" ...\n\
         url - ссылки на статьи в формате \"http://some.ru/mega_nuews\"\n\
+        +html - сохраняет загруженный текст страницы ./result/url.html\n\
+        +d: - вывод лога работы (+d:main - верхний уровеньб +d:page - parsing страницы)\n\
     \n\
     Настройки фильтров дополнять в файле filter.ini\n\n"
 
     print(helping)
+
 
 def outputfilename(url):
     r = re.search(r'(https?://)?([\da-z.-]+)\.([a-z.]{2,6})([/\d\w .-]*)', url)
@@ -614,17 +634,36 @@ def outputfilename(url):
 
     return filename
 
+
 if __name__ == '__main__':
 
     if len (sys.argv) == 1:
         print_help()
         sys.exit()
 
+    debug = ""
     for ar in sys.argv[1:]:
+        #save recived html page in .\result\url.html
+        if re.search('\+html', ar):
+            HtmlToText.SAVE_HTML = True
+            continue
+
+        #log top level info
+        if re.search("\+d:main",ar):
+            debug += ' main'
+            continue
+
+        #log parse page
+        if re.search("\+d:page",ar):
+            debug += ' page'
+            continue
+
+        #create file name from url (and check valid url)
         out_file = outputfilename(ar)
-        if len(out_file)>2:
-            print("Extracting {} to {}".format(ar, out_file))
-            run_extractor(ar, out_file)
+
+        if len(out_file)>12:
+            print("\nStart for {}".format(ar, out_file))
+            run_extractor(ar, out_file, debug)
         else:
             print("Can't response link: {}".format(ar))
 
