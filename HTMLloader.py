@@ -410,7 +410,8 @@ class ContextFilter:
 
         fs = open(filename, 'w')
 
-        title = "# Настройки фильтров для некоторых новостных сайтов.\n\
+        title = "\
+        # Настройки фильтров для сайтов.\n\
         # Структура фильтра:\n\
         # <HOST.COM>: {<Name>; <Priority>; ['<includeKey1>','<includeKey2>']; \n\
         #			['<excludeKey1>','<excludeKey2>']; ['hostword1']; }\n\
@@ -557,6 +558,8 @@ class HtmlToText:
                     out_filename = self.get_filename_from_url(url)
 
                 res_file = open(out_filename,"w")
+
+                res_file.write(url+'\n')
 
                 res_file.write(text)
 
